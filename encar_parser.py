@@ -7,52 +7,54 @@ async def parse_encar(url):
         browser = await p.chromium.launch(headless=True)
         page = await browser.new_page()
         await page.goto(url, timeout=60000)
-
-        # Ждём полной загрузки всей страницы
-        await page.wait_for_load_state("networkidle", timeout=60000)
-
-        # Печатаем весь HTML страницы — для диагностики
-        print(await page.content())
+        await page.wait_for_load_state("networkidle")
 
         # Заголовок
         try:
-            title = await page.locator(".title").inner_text()
+            title_elem = await page.locator('h2[data-testid="car-name"]').text_content()
+            title = title_elem.strip() if title_elem else "Не найден"
         except:
-            title = "Не удалось получить заголовок"
+            title = "Не найден"
 
         # Цена
         try:
-            price = await page.locator(".price").inner_text()
+            price_elem = await page.locator('strong.price').text_content()
+            price = price_elem.strip() if price_elem else "Не указана"
         except:
-            price = "Нет цены"
+            price = "Не указана"
+
+        # Пробег и год выпуска
+        characteristics = {}
+        try:
+            rows = await page.locator('dl.info-basic > div').all()
+            for row in rows:
+                label = await row.locator('dt').text_content()
+                value = await row.locator('dd').text_content()
+                if label and value:
+                    characteristics[label.strip()] = value.strip()
+        except:
+            characteristics = {"Ошибка": "Не удалось считать характеристики"}
 
         # VIN
         try:
-            vin = await page.locator(".carfax > div:nth-child(2)").inner_text()
+            vin_block = await page.locator("text=/VIN/i").element_handle()
+            if vin_block:
+                vin = await vin_block.evaluate("el => el.nextElementSibling?.textContent?.trim()")
+            else:
+                vin = "Не найден"
         except:
-            vin = "VIN не найден"
-
-        # Характеристики
-        specs = {}
-        try:
-            spec_items = await page.locator(".spec > ul > li").all()
-            for item in spec_items:
-                key = await item.locator(".label").inner_text()
-                value = await item.locator(".text").inner_text()
-                specs[key] = value
-        except:
-            specs = {"Ошибка": "Не удалось получить характеристики"}
+            vin = "Не найден"
 
         # Фотографии
-        images = []
+        photos = []
         try:
-            thumbs = await page.locator(".pic_thumb img").all()
+            thumbs = await page.locator("div.swiper-slide img").all()
             for img in thumbs:
                 src = await img.get_attribute("src")
-                if src:
-                    images.append(src)
+                if src and "http" in src:
+                    photos.append(src)
         except:
-            images = []
+            photos = []
 
         await browser.close()
 
@@ -60,16 +62,14 @@ async def parse_encar(url):
             "Заголовок": title,
             "Цена": price,
             "VIN": vin,
-            "Характеристики": specs,
-            "Фотографии": images[:5]
+            "Характеристики": characteristics,
+            "Фотографии": photos[:10]
         }
 
-# Подставляем твою ссылку
+# Тест
 if __name__ == "__main__":
     test_url = "https://fem.encar.com/cars/detail/39024513?listAdvType=share"
     result = asyncio.run(parse_encar(test_url))
     for key, value in result.items():
         print(f"{key}: {value}")
-
-    # Добавим паузу, чтобы Render не завершил сразу
     time.sleep(300)
